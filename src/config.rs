@@ -18,8 +18,8 @@ pub use self::{
     },
     keybinds::{
         format_prefix_combos, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
-        BindingConfig, CommandKeybindConfig, CustomCommandAction, CustomCommandKeybind,
-        IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
+        BindingConfig, CommandKeybindConfig, CopyModeKeybinds, CustomCommandAction,
+        CustomCommandKeybind, IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
     },
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, Config, ConfigReloadReport,
@@ -430,6 +430,34 @@ command = "echo one"
         assert!(switch_tab_labels
             .iter()
             .all(|label| label.starts_with("prefix+")));
+    }
+
+    #[test]
+    fn local_keybindings_profile_writes_only_user_copy_mode_fields() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+prefix = ["ctrl+space", "ctrl+s"]
+copy_mode_cursor_down = "h"
+copy_mode_copy_selection = "y"
+"#,
+        )
+        .unwrap();
+
+        let profile = config.local_keybindings_profile_toml().unwrap();
+        let round_tripped: Config = toml::from_str(&profile).unwrap();
+
+        assert!(profile.contains("copy_mode_cursor_down = \"h\""));
+        assert!(!profile.contains("copy_mode_cursor_left"));
+        assert!(!profile.contains("copy_mode_page_up"));
+        let before = config.keybinds().copy_mode_keys;
+        let after = round_tripped.keybinds().copy_mode_keys;
+        assert_eq!(before.cursor_down, after.cursor_down);
+        assert_eq!(before.cursor_left, after.cursor_left);
+        assert_eq!(before.page_up, after.page_up);
+        assert_eq!(before.copy_selection, after.copy_selection);
+        assert_eq!(round_tripped.prefix_keys(), config.prefix_keys());
+        assert!(round_tripped.collect_diagnostics().is_empty());
     }
 
     #[test]

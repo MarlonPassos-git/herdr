@@ -169,28 +169,75 @@ pub(super) fn render_mode_bar(
                         .map(|current| format!(" {}/{}", current + 1, copy_mode.search_total))
                         .or_else(|| (!copy_mode.search_query.is_empty()).then(|| " 0/0".to_owned()))
                         .unwrap_or_default();
-                    let (exit_keys, exit_label) =
-                        if copy_mode.search_query.is_empty() && copy_mode.selection.is_none() {
-                            ("q/esc", " exit")
-                        } else {
-                            ("esc", " clear  q exit")
-                        };
+                    let bindings = &keybinds.keybinds.copy_mode_keys;
+                    let label = |keys: &crate::config::ActionKeybinds| {
+                        keys.bindings
+                            .first()
+                            .map(|binding| binding.label.clone())
+                            .unwrap_or_else(|| "unset".to_owned())
+                    };
+                    let cancel = bindings
+                        .cancel
+                        .bindings
+                        .first()
+                        .map(|binding| binding.label.as_str());
+                    let exit_keys = match (
+                        cancel,
+                        copy_mode.search_query.is_empty() && copy_mode.selection.is_none(),
+                    ) {
+                        (Some(key), true) => format!("{key}/esc"),
+                        (Some(key), false) => format!("esc clear  {key}"),
+                        (None, true) => "esc".to_owned(),
+                        (None, false) => "esc clear; esc".to_owned(),
+                    };
                     segments.extend([
                         (" COPY ".to_owned(), mode_style),
                         (" ".to_owned(), base),
-                        ("h/j/k/l w/b/e { }".to_owned(), key),
+                        (
+                            format!(
+                                "{}/{}/{}/{}",
+                                label(&bindings.cursor_left),
+                                label(&bindings.cursor_down),
+                                label(&bindings.cursor_up),
+                                label(&bindings.cursor_right)
+                            ),
+                            key,
+                        ),
                         (" move  ".to_owned(), base),
-                        ("/ ?".to_owned(), key),
+                        (
+                            format!(
+                                "{} / {}",
+                                label(&bindings.search_forward),
+                                label(&bindings.search_backward)
+                            ),
+                            key,
+                        ),
                         (" search  ".to_owned(), base),
-                        ("n/N".to_owned(), key),
+                        (
+                            format!(
+                                "{} / {}",
+                                label(&bindings.search_next),
+                                label(&bindings.search_previous)
+                            ),
+                            key,
+                        ),
                         (format!(" repeat{match_status}  "), base),
-                        ("v/space".to_owned(), key),
+                        (label(&bindings.begin_selection), key),
                         (format!(" {select}  "), base),
-                        ("y/enter".to_owned(), key),
-                        (" copy  ".to_owned(), base),
-                        (exit_keys.to_owned(), key),
-                        (exit_label.to_owned(), base),
                     ]);
+                    if !bindings.copy_selection.bindings.is_empty() {
+                        segments.extend([
+                            (label(&bindings.copy_selection), key),
+                            (" copy  ".to_owned(), base),
+                        ]);
+                    }
+                    if !bindings.copy.bindings.is_empty() {
+                        segments.extend([
+                            (label(&bindings.copy), key),
+                            (" copy+exit  ".to_owned(), base),
+                        ]);
+                    }
+                    segments.extend([(exit_keys, key), (" exit".to_owned(), base)]);
                 }
             }
             ClientShellMode::Terminal => unreachable!(),
