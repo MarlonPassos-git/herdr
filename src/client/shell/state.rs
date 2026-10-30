@@ -834,6 +834,12 @@ pub(super) struct ClientCopySearchResult {
     pub(super) current_global: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientCopyDisposition {
+    Exit,
+    Stay,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ClientCopyModeState {
     pub(super) pane_id: String,
@@ -853,7 +859,7 @@ pub(super) struct ClientCopyModeState {
     pub(super) search_current: Option<usize>,
     pub(super) search_current_global: Option<u64>,
     pub(super) search_generation: u64,
-    pub(super) copy_after_search: bool,
+    pub(super) copy_after_search: Option<ClientCopyDisposition>,
 }
 
 pub(crate) struct ClientShellState {
@@ -1777,7 +1783,7 @@ impl ClientShellState {
                     copy_mode.search_current = None;
                     copy_mode.search_current_global = None;
                     copy_mode.search_generation = copy_mode.search_generation.saturating_add(1);
-                    copy_mode.copy_after_search = false;
+                    copy_mode.copy_after_search = None;
                 }
                 if let Some(scroll) = pane.scroll {
                     let actual_offset =

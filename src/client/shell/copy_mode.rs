@@ -95,7 +95,7 @@ impl ClientShellState {
             search_current: None,
             search_current_global: None,
             search_generation: 0,
-            copy_after_search: false,
+            copy_after_search: None,
         });
         self.mode = ClientShellMode::Copy;
         true
@@ -109,155 +109,65 @@ impl ClientShellState {
         if self.route_copy_search_prompt_key(key, outcome) {
             return;
         }
-        match key.code {
-            KeyCode::Esc => {
-                let should_clear = self.copy_mode.as_ref().is_some_and(|copy_mode| {
-                    copy_mode.selection.is_some()
-                        || !copy_mode.search_query.is_empty()
-                        || !copy_mode.search_matches.is_empty()
-                        || copy_mode.search_direction.is_some()
-                });
-                if should_clear {
-                    if let Some(copy_mode) = self.copy_mode.as_mut() {
-                        copy_mode.selection = None;
-                        copy_mode.search_query.clear();
-                        copy_mode.search_direction = None;
-                        copy_mode.search_matches.clear();
-                        copy_mode.search_total = 0;
-                        copy_mode.search_current = None;
-                        copy_mode.search_current_global = None;
-                        copy_mode.search_generation = copy_mode.search_generation.saturating_add(1);
-                        copy_mode.copy_after_search = false;
-                    }
-                    self.selection = None;
-                } else {
-                    self.exit_copy_mode(false, outcome);
+        if key.code == KeyCode::Esc {
+            let should_clear = self.copy_mode.as_ref().is_some_and(|copy_mode| {
+                copy_mode.selection.is_some()
+                    || !copy_mode.search_query.is_empty()
+                    || !copy_mode.search_matches.is_empty()
+                    || copy_mode.search_direction.is_some()
+            });
+            if should_clear {
+                if let Some(copy_mode) = self.copy_mode.as_mut() {
+                    copy_mode.selection = None;
+                    copy_mode.search_query.clear();
+                    copy_mode.search_direction = None;
+                    copy_mode.search_matches.clear();
+                    copy_mode.search_total = 0;
+                    copy_mode.search_current = None;
+                    copy_mode.search_current_global = None;
+                    copy_mode.search_generation = copy_mode.search_generation.saturating_add(1);
+                    copy_mode.copy_after_search = None;
                 }
-                outcome.repaint = true;
-                return;
+                self.selection = None;
+            } else {
+                self.exit_copy_mode(false, outcome);
             }
-            KeyCode::Enter => {
-                if !self.defer_copy_until_search_result() {
-                    self.exit_copy_mode(true, outcome);
-                }
-                return;
-            }
-            KeyCode::Left => {
-                self.move_copy_cursor(0, -1, outcome);
-                return;
-            }
-            KeyCode::Down => {
-                self.move_copy_cursor(1, 0, outcome);
-                return;
-            }
-            KeyCode::Up => {
-                self.move_copy_cursor(-1, 0, outcome);
-                return;
-            }
-            KeyCode::Right => {
-                self.move_copy_cursor(0, 1, outcome);
-                return;
-            }
-            KeyCode::PageUp => {
-                self.move_copy_page(-1, false, outcome);
-                return;
-            }
-            KeyCode::PageDown => {
-                self.move_copy_page(1, false, outcome);
-                return;
-            }
-            KeyCode::Home => {
-                self.set_copy_cursor_col(0);
-                self.sync_copy_selection();
-                outcome.repaint = true;
-                return;
-            }
-            KeyCode::End => {
-                self.request_copy_motion(crate::api::schema::PaneCopyMotion::LineEnd, outcome);
-                return;
-            }
-            _ => {}
+            outcome.repaint = true;
+            return;
         }
 
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('b'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_copy_page(-1, false, outcome);
-                return;
-            }
-            (KeyCode::Char('f'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_copy_page(1, false, outcome);
-                return;
-            }
-            (KeyCode::Char('u'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_copy_page(-1, true, outcome);
-                return;
-            }
-            (KeyCode::Char('d'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.move_copy_page(1, true, outcome);
-                return;
-            }
-            _ => {}
-        }
-
-        let Some(command) = crate::copy_mode::copy_mode_command_char(key.clone()) else {
+        let Some(action) =
+            resolve_copy_mode_action(&self.config.keybinds.keybinds.copy_mode_keys, key)
+        else {
             return;
         };
-        match command {
-            'q' => self.exit_copy_mode(false, outcome),
-            'y' => {
-                if !self.defer_copy_until_search_result() {
-                    self.exit_copy_mode(true, outcome);
+        match action {
+            CopyModeAction::Exit { copy } => {
+                if !copy || !self.defer_copy_until_search_result(ClientCopyDisposition::Exit) {
+                    self.exit_copy_mode(copy, outcome);
                 }
             }
-            'v' | ' ' => self.begin_copy_selection(false),
-            'V' => self.begin_copy_selection(true),
-            'h' => self.move_copy_cursor(0, -1, outcome),
-            'j' => self.move_copy_cursor(1, 0, outcome),
-            'k' => self.move_copy_cursor(-1, 0, outcome),
-            'l' => self.move_copy_cursor(0, 1, outcome),
-            'g' => self.move_copy_history(true, outcome),
-            'G' => self.move_copy_history(false, outcome),
-            '0' => {
+            CopyModeAction::CopySelection => {
+                if !self.defer_copy_until_search_result(ClientCopyDisposition::Stay) {
+                    self.copy_selection_in_mode(outcome);
+                }
+            }
+            CopyModeAction::MoveCursor { rows, cols } => self.move_copy_cursor(rows, cols, outcome),
+            CopyModeAction::Motion(motion) => self.request_copy_motion(motion, outcome),
+            CopyModeAction::StartOfLine => {
                 self.set_copy_cursor_col(0);
                 self.sync_copy_selection();
-                outcome.repaint = true;
             }
-            '$' => self.request_copy_motion(crate::api::schema::PaneCopyMotion::LineEnd, outcome),
-            '^' => {
-                self.request_copy_motion(crate::api::schema::PaneCopyMotion::FirstNonBlank, outcome)
+            CopyModeAction::History { top } => self.move_copy_history(top, outcome),
+            CopyModeAction::ScrollPage {
+                direction,
+                half_page,
+            } => {
+                self.move_copy_page(direction, half_page, outcome);
             }
-            '/' => self.open_copy_search(crate::api::schema::PaneCopySearchDirection::Forward),
-            '?' => self.open_copy_search(crate::api::schema::PaneCopySearchDirection::Backward),
-            'n' => self.repeat_copy_search(false, outcome),
-            'N' => self.repeat_copy_search(true, outcome),
-            'w' => {
-                self.request_copy_motion(crate::api::schema::PaneCopyMotion::NextWordStart, outcome)
-            }
-            'b' => self.request_copy_motion(
-                crate::api::schema::PaneCopyMotion::PreviousWordStart,
-                outcome,
-            ),
-            'e' => {
-                self.request_copy_motion(crate::api::schema::PaneCopyMotion::NextWordEnd, outcome)
-            }
-            'W' => self.request_copy_motion(
-                crate::api::schema::PaneCopyMotion::NextBigWordStart,
-                outcome,
-            ),
-            'B' => self.request_copy_motion(
-                crate::api::schema::PaneCopyMotion::PreviousBigWordStart,
-                outcome,
-            ),
-            'E' => self
-                .request_copy_motion(crate::api::schema::PaneCopyMotion::NextBigWordEnd, outcome),
-            '{' => self.request_copy_motion(
-                crate::api::schema::PaneCopyMotion::PreviousParagraph,
-                outcome,
-            ),
-            '}' => {
-                self.request_copy_motion(crate::api::schema::PaneCopyMotion::NextParagraph, outcome)
-            }
-            _ => return,
+            CopyModeAction::BeginSelection { linewise } => self.begin_copy_selection(linewise),
+            CopyModeAction::OpenSearch(direction) => self.open_copy_search(direction),
+            CopyModeAction::RepeatSearch { reverse } => self.repeat_copy_search(reverse, outcome),
         }
         outcome.repaint = true;
     }
@@ -358,7 +268,7 @@ impl ClientShellState {
         self.request_copy_search(copy_mode.search_query.clone(), direction, true, outcome);
     }
 
-    fn defer_copy_until_search_result(&mut self) -> bool {
+    fn defer_copy_until_search_result(&mut self, disposition: ClientCopyDisposition) -> bool {
         let Some(copy_mode) = self.copy_mode.as_ref() else {
             return false;
         };
@@ -379,7 +289,7 @@ impl ClientShellState {
             .any(|operation| matches!(operation, ClientCopyOperation::Search { .. }));
         if pending {
             if let Some(copy_mode) = self.copy_mode.as_mut() {
-                copy_mode.copy_after_search = true;
+                copy_mode.copy_after_search = Some(disposition);
             }
         }
         pending
@@ -440,7 +350,7 @@ impl ClientShellState {
         copy_mode.search_current_global = result.current_global;
         let target = current.and_then(|index| copy_mode.search_matches.get(index).copied());
         let copy_after_search = if search_queued {
-            false
+            None
         } else {
             std::mem::take(&mut copy_mode.copy_after_search)
         };
@@ -449,8 +359,10 @@ impl ClientShellState {
             self.reveal_copy_cursor(outcome, true);
             self.sync_copy_selection();
         }
-        if copy_after_search {
-            self.exit_copy_mode(true, outcome);
+        match copy_after_search {
+            Some(ClientCopyDisposition::Exit) => self.exit_copy_mode(true, outcome),
+            Some(ClientCopyDisposition::Stay) => self.copy_selection_in_mode(outcome),
+            None => {}
         }
         outcome.repaint = true;
         true
@@ -490,7 +402,7 @@ impl ClientShellState {
             .as_mut()
             .filter(|copy_mode| copy_mode.search_generation == generation)
         {
-            copy_mode.copy_after_search = false;
+            copy_mode.copy_after_search = None;
         }
     }
 
@@ -810,12 +722,12 @@ impl ClientShellState {
         true
     }
 
-    pub(super) fn exit_copy_mode(&mut self, copy: bool, outcome: &mut ClientShellInput) {
+    fn copy_current_selection(&mut self, outcome: &mut ClientShellInput) {
         let live_selection = self
             .selection
             .as_ref()
             .is_some_and(crate::selection::Selection::is_visible);
-        if copy && !live_selection {
+        if !live_selection {
             if let Some((pane_id, text_match)) = self.copy_mode.as_ref().and_then(|copy_mode| {
                 copy_mode
                     .search_current
@@ -829,20 +741,36 @@ impl ClientShellState {
                 ));
             }
         }
-        let Some(copy_mode) = self.copy_mode.take() else {
-            return;
-        };
-        self.reset_copy_pipeline();
-        if copy
-            && self
-                .selection
-                .as_ref()
-                .is_some_and(crate::selection::Selection::is_visible)
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(crate::selection::Selection::is_visible)
         {
             // A visible explicit selection is live. If the fallback above supplied
             // a search match, retain the revision that established its boundaries.
             self.request_selection_copy(outcome, live_selection);
         }
+    }
+
+    fn copy_selection_in_mode(&mut self, outcome: &mut ClientShellInput) {
+        self.copy_current_selection(outcome);
+        if let Some(copy_mode) = self.copy_mode.as_mut() {
+            copy_mode.selection = None;
+        }
+        self.selection = None;
+        self.selection_highlight_clear_deadline = None;
+        outcome.repaint = true;
+    }
+
+    pub(super) fn exit_copy_mode(&mut self, copy: bool, outcome: &mut ClientShellInput) {
+        if self.copy_mode.is_none() {
+            return;
+        }
+        if copy {
+            self.copy_current_selection(outcome);
+        }
+        let copy_mode = self.copy_mode.take().expect("active copy mode");
+        self.reset_copy_pipeline();
         self.selection = None;
         self.selection_highlight_clear_deadline = None;
         self.push_pane_scroll_offset(
@@ -853,4 +781,156 @@ impl ClientShellState {
         self.mode = ClientShellMode::Terminal;
         outcome.repaint = true;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CopyModeAction {
+    CopySelection,
+    Exit { copy: bool },
+    MoveCursor { rows: i16, cols: i16 },
+    Motion(crate::api::schema::PaneCopyMotion),
+    StartOfLine,
+    History { top: bool },
+    ScrollPage { direction: i8, half_page: bool },
+    BeginSelection { linewise: bool },
+    OpenSearch(crate::api::schema::PaneCopySearchDirection),
+    RepeatSearch { reverse: bool },
+}
+
+pub(super) fn resolve_copy_mode_action(
+    keybinds: &crate::config::CopyModeKeybinds,
+    key: &crate::input::TerminalKey,
+) -> Option<CopyModeAction> {
+    use crate::api::schema::{PaneCopyMotion, PaneCopySearchDirection};
+
+    let text_key = crate::copy_mode::copy_mode_command_char(key.clone())
+        .map(|ch| crate::input::TerminalKey::new(KeyCode::Char(ch), KeyModifiers::empty()));
+    let actions = [
+        (&keybinds.cancel, CopyModeAction::Exit { copy: false }),
+        (&keybinds.copy, CopyModeAction::Exit { copy: true }),
+        (&keybinds.copy_selection, CopyModeAction::CopySelection),
+        (
+            &keybinds.cursor_left,
+            CopyModeAction::MoveCursor { rows: 0, cols: -1 },
+        ),
+        (
+            &keybinds.cursor_down,
+            CopyModeAction::MoveCursor { rows: 1, cols: 0 },
+        ),
+        (
+            &keybinds.cursor_up,
+            CopyModeAction::MoveCursor { rows: -1, cols: 0 },
+        ),
+        (
+            &keybinds.cursor_right,
+            CopyModeAction::MoveCursor { rows: 0, cols: 1 },
+        ),
+        (
+            &keybinds.next_word,
+            CopyModeAction::Motion(PaneCopyMotion::NextWordStart),
+        ),
+        (
+            &keybinds.previous_word,
+            CopyModeAction::Motion(PaneCopyMotion::PreviousWordStart),
+        ),
+        (
+            &keybinds.next_word_end,
+            CopyModeAction::Motion(PaneCopyMotion::NextWordEnd),
+        ),
+        (
+            &keybinds.next_big_word,
+            CopyModeAction::Motion(PaneCopyMotion::NextBigWordStart),
+        ),
+        (
+            &keybinds.previous_big_word,
+            CopyModeAction::Motion(PaneCopyMotion::PreviousBigWordStart),
+        ),
+        (
+            &keybinds.next_big_word_end,
+            CopyModeAction::Motion(PaneCopyMotion::NextBigWordEnd),
+        ),
+        (
+            &keybinds.first_non_blank,
+            CopyModeAction::Motion(PaneCopyMotion::FirstNonBlank),
+        ),
+        (&keybinds.start_of_line, CopyModeAction::StartOfLine),
+        (
+            &keybinds.end_of_line,
+            CopyModeAction::Motion(PaneCopyMotion::LineEnd),
+        ),
+        (
+            &keybinds.next_paragraph,
+            CopyModeAction::Motion(PaneCopyMotion::NextParagraph),
+        ),
+        (
+            &keybinds.previous_paragraph,
+            CopyModeAction::Motion(PaneCopyMotion::PreviousParagraph),
+        ),
+        (
+            &keybinds.scrollback_top,
+            CopyModeAction::History { top: true },
+        ),
+        (
+            &keybinds.scrollback_bottom,
+            CopyModeAction::History { top: false },
+        ),
+        (
+            &keybinds.page_up,
+            CopyModeAction::ScrollPage {
+                direction: -1,
+                half_page: false,
+            },
+        ),
+        (
+            &keybinds.page_down,
+            CopyModeAction::ScrollPage {
+                direction: 1,
+                half_page: false,
+            },
+        ),
+        (
+            &keybinds.half_page_up,
+            CopyModeAction::ScrollPage {
+                direction: -1,
+                half_page: true,
+            },
+        ),
+        (
+            &keybinds.half_page_down,
+            CopyModeAction::ScrollPage {
+                direction: 1,
+                half_page: true,
+            },
+        ),
+        (
+            &keybinds.begin_selection,
+            CopyModeAction::BeginSelection { linewise: false },
+        ),
+        (
+            &keybinds.select_line,
+            CopyModeAction::BeginSelection { linewise: true },
+        ),
+        (
+            &keybinds.search_forward,
+            CopyModeAction::OpenSearch(PaneCopySearchDirection::Forward),
+        ),
+        (
+            &keybinds.search_backward,
+            CopyModeAction::OpenSearch(PaneCopySearchDirection::Backward),
+        ),
+        (
+            &keybinds.search_next,
+            CopyModeAction::RepeatSearch { reverse: false },
+        ),
+        (
+            &keybinds.search_previous,
+            CopyModeAction::RepeatSearch { reverse: true },
+        ),
+    ];
+    let resolve = |key: &crate::input::TerminalKey| {
+        actions
+            .iter()
+            .find_map(|(bindings, action)| bindings.matches_direct_key(key).then_some(*action))
+    };
+    resolve(key).or_else(|| text_key.as_ref().and_then(resolve))
 }
