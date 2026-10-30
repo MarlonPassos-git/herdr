@@ -433,6 +433,34 @@ command = "echo one"
     }
 
     #[test]
+    fn local_keybindings_profile_writes_only_user_copy_mode_fields() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+prefix = ["ctrl+space", "ctrl+s"]
+copy_mode_cursor_down = "h"
+copy_mode_copy_selection = "y"
+"#,
+        )
+        .unwrap();
+
+        let profile = config.local_keybindings_profile_toml().unwrap();
+        let round_tripped: Config = toml::from_str(&profile).unwrap();
+
+        assert!(profile.contains("copy_mode_cursor_down = \"h\""));
+        assert!(!profile.contains("copy_mode_cursor_left"));
+        assert!(!profile.contains("copy_mode_page_up"));
+        let before = config.keybinds().copy_mode_keys;
+        let after = round_tripped.keybinds().copy_mode_keys;
+        assert_eq!(before.cursor_down, after.cursor_down);
+        assert_eq!(before.cursor_left, after.cursor_left);
+        assert_eq!(before.page_up, after.page_up);
+        assert_eq!(before.copy_selection, after.copy_selection);
+        assert_eq!(round_tripped.prefix_keys(), config.prefix_keys());
+        assert!(round_tripped.collect_diagnostics().is_empty());
+    }
+
+    #[test]
     fn remote_image_paste_key_defaults_to_ctrl_v() {
         let config = Config::default();
         assert_eq!(

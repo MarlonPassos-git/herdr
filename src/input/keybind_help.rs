@@ -440,4 +440,35 @@ mod tests {
         assert_eq!(global[0].0, "ctrl+space / ctrl+s");
         assert_eq!(global[0].1, "prefix mode");
     }
+    #[test]
+    fn copy_mode_help_shows_each_action_and_effective_bindings() {
+        let config: crate::config::Config = toml::from_str(
+            r#"
+[keys]
+copy_mode_cursor_down = ["h", "ctrl+n"]
+copy_mode_copy = []
+"#,
+        )
+        .unwrap();
+        let groups = keybind_help_groups(&config.keybinds(), &config.prefix_keys());
+        let entries = &groups
+            .iter()
+            .find(|(name, _)| *name == "copy mode")
+            .expect("copy mode group")
+            .1;
+        for (label, expected) in [
+            ("move cursor left", "left"),
+            ("copy selection and exit copy mode", "unset"),
+            ("clear selection/search, otherwise exit", "esc"),
+        ] {
+            assert_eq!(
+                entries
+                    .iter()
+                    .find(|(_, text)| text == label)
+                    .expect(label)
+                    .0,
+                expected
+            );
+        }
+    }
 }
