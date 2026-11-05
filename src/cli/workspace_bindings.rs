@@ -234,6 +234,15 @@ mod tests {
     }
 
     #[test]
+    fn workspace_navigation_requires_an_explicit_pane() {
+        assert!(request("navigate", &[]).is_err());
+        let req = request("navigate", &["--pane", "w1:p2"]).unwrap();
+        assert!(
+            matches!(req.method, Method::WorkspaceNavigate(target) if target.pane_id == "w1:p2")
+        );
+    }
+
+    #[test]
     fn workspace_projection_preserves_defaults_and_ordered_maps() {
         let request = request(
             "create",

@@ -1026,3 +1026,66 @@ fn kitty_ctrl_bracket_cancels_a_blocked_foreign_preview() {
     assert_ne!(state.mode, ClientShellMode::Navigate);
     assert!(state.navigate_workspace_id.is_none());
 }
+
+#[test]
+fn workspace_navigation_request_opens_only_for_the_current_pane_and_connection() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let endpoint = state.active_endpoint_id.clone();
+    state.set_endpoint_snapshot_for_generation(&endpoint, 1, Box::new(snapshot()));
+    let generation = state
+        .endpoints
+        .iter()
+        .find(|e| e.endpoint_id == endpoint)
+        .unwrap()
+        .snapshot_generation
+        .unwrap();
+    let projected = state.snapshot.as_ref().unwrap();
+    let request = crate::protocol::endpoint::EndpointWorkspaceNavigation {
+        boot_id: projected.boot_id.clone(),
+        pane_id: projected.focused_pane_id.clone().unwrap(),
+    };
+    let mut other_pane = request.clone();
+    other_pane.pane_id = "missing:pane".into();
+    assert!(!state.receive_workspace_navigation(&endpoint, generation, other_pane));
+    assert!(!state.receive_workspace_navigation(&endpoint, generation + 1, request.clone()));
+    let mut old_boot = request.clone();
+    old_boot.boot_id = "previous-boot".into();
+    assert!(!state.receive_workspace_navigation(&endpoint, generation, old_boot));
+    assert!(state.receive_workspace_navigation(&endpoint, generation, request.clone()));
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+    assert_eq!(
+        state.navigate_workspace_id,
+        state.focused_navigation_target()
+    );
+    assert!(!state.receive_workspace_navigation(&endpoint, generation, request));
+}
+
+#[test]
+fn workspace_navigation_request_keeps_other_endpoints_and_client_modes_untouched() {
+    let (mut state, remote) = state_with_remote();
+    let endpoint = state.active_endpoint_id.clone();
+    state.set_endpoint_snapshot_for_generation(&endpoint, 1, Box::new(snapshot()));
+    let generation = state
+        .endpoints
+        .iter()
+        .find(|e| e.endpoint_id == endpoint)
+        .unwrap()
+        .snapshot_generation
+        .unwrap();
+    let projected = state.snapshot.as_ref().unwrap();
+    let request = crate::protocol::endpoint::EndpointWorkspaceNavigation {
+        boot_id: projected.boot_id.clone(),
+        pane_id: projected.focused_pane_id.clone().unwrap(),
+    };
+    assert!(!state.receive_workspace_navigation(&remote, generation, request.clone()));
+    for mode in [
+        ClientShellMode::Copy,
+        ClientShellMode::Resize,
+        ClientShellMode::Prefix,
+    ] {
+        state.mode = mode;
+        assert!(!state.receive_workspace_navigation(&endpoint, generation, request.clone()));
+        assert_eq!(state.mode, mode);
+    }
+}

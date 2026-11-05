@@ -82,6 +82,19 @@ mod tests {
     use crate::client::endpoint::ProfileId;
 
     #[test]
+    fn workspace_navigation_control_is_optional_and_ignores_malformed_payloads() {
+        let kind = crate::protocol::endpoint::WORKSPACE_NAVIGATION_KIND;
+        assert!(matches!(
+            decode_endpoint_control(kind, "{}").unwrap(),
+            EndpointControlMessage::Ignored
+        ));
+        assert!(
+            matches!(decode_endpoint_control(kind, r#"{"boot_id":"boot", "pane_id":"w1:p1"}"#).unwrap(),
+            EndpointControlMessage::WorkspaceNavigation(request) if request.pane_id == "w1:p1")
+        );
+    }
+
+    #[test]
     fn unknown_optional_controls_are_ignored() {
         assert!(matches!(
             decode_endpoint_control("future.optional", "not json").unwrap(),
