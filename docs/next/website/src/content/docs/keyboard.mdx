@@ -138,3 +138,19 @@ A few `ctrl+alt` chords are taken elsewhere. Avoid these:
 | `ctrl+alt+f1..f12` | Linux virtual console switching |
 
 If a direct chord does nothing, your terminal or desktop environment consumed it before Herdr could see it. Rebind either side: free the chord in the terminal's settings, or pick another chord in Herdr.
+
+## Request workspace navigation from a plugin
+
+The local fork provides `herdr workspace navigate --pane "$HERDR_PANE_ID"`
+(`workspace.navigate` in the JSON API). This sends an ephemeral request to
+attached client shells. A client opens its workspace navigation only while it
+is viewing that pane in terminal mode. Requests from an older connection or
+server boot, inactive machines, or panes the user has left are ignored; open
+dialogs and popups remain in control. No workspace is switched until the user
+confirms a selection.
+
+The command requires an existing pane and at least one attached active client
+shell. A successful response acknowledges delivery, not user selection. Older
+clients safely ignore the optional `endpoint.workspace-navigation.v1` control.
+The `vim-herdr-navigation` plugin uses this command when directional pane focus
+reports `no_neighbor`, falling back to its popup on servers without the command.
