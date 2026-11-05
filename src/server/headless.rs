@@ -83,6 +83,7 @@ mod notifications;
 mod render;
 mod retained_surface;
 mod surface_interest;
+mod workspace_navigation;
 
 // Producers can refill even a bounded channel while it is being drained.
 // Yield to scheduled work and rendering between batches; select! below
@@ -2951,6 +2952,12 @@ impl HeadlessServer {
                 self.finish_live_handoff_shutdown();
             }
             return true;
+        }
+
+        if let api::schema::Method::WorkspaceNavigate(params) = &msg.request.method {
+            let response = self.handle_workspace_navigation_api(msg.request.id.clone(), params);
+            let _ = msg.respond_to.send(response);
+            return false;
         }
 
         if let api::schema::Method::NotificationShow(params) = &msg.request.method {

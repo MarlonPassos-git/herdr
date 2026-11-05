@@ -2113,6 +2113,31 @@ async fn run_client_loop(
                             continue;
                         }
                         let snapshot = match endpoint::decode_endpoint_control(&kind, &data) {
+                            Ok(endpoint::EndpointControlMessage::WorkspaceNavigation(request)) => {
+                                let frame = state.shell.as_mut().and_then(|shell| {
+                                    shell
+                                        .receive_workspace_navigation(
+                                            &endpoint_id,
+                                            generation,
+                                            request,
+                                        )
+                                        .then(|| {
+                                            shell.compose(
+                                                state.reported_size.0,
+                                                state.reported_size.1,
+                                            )
+                                        })
+                                        .flatten()
+                                });
+                                apply_client_shell_input_source_changes(
+                                    &mut state,
+                                    &mut prefix_input_source,
+                                );
+                                if let Some(frame) = frame {
+                                    state.present_frame(frame);
+                                }
+                                continue;
+                            }
                             Ok(endpoint::EndpointControlMessage::HealthPong) => continue,
                             Ok(endpoint::EndpointControlMessage::AgentViewProjection(
                                 projection,

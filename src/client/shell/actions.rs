@@ -149,12 +149,7 @@ impl ClientShellState {
                     return;
                 }
                 if action == crate::input::KeybindAction::WorkspacePicker {
-                    self.pending_workspace_highlight = None;
-                    self.mobile_switcher_scroll = 0;
-                    self.reveal_mobile_workspace = false;
-                    self.mode = ClientShellMode::Navigate;
-                    self.navigate_workspace_id = self.focused_navigation_target();
-                    self.reveal_navigation_workspace = true;
+                    self.open_workspace_navigation();
                     outcome.repaint = true;
                     return;
                 }

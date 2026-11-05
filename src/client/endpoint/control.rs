@@ -8,6 +8,7 @@ pub(crate) struct DecodedAgentViewProjection {
 
 pub(crate) enum EndpointControlMessage {
     HealthPong,
+    WorkspaceNavigation(crate::protocol::endpoint::EndpointWorkspaceNavigation),
     AgentViewProjection(DecodedAgentViewProjection),
     AgentCompletions(crate::protocol::endpoint::EndpointAgentCompletions),
     Snapshot(Box<crate::protocol::ClientShellSnapshot>),
@@ -18,6 +19,11 @@ pub(crate) fn decode_endpoint_control(
     kind: &str,
     data: &str,
 ) -> Result<EndpointControlMessage, String> {
+    if kind == crate::protocol::endpoint::WORKSPACE_NAVIGATION_KIND {
+        return Ok(serde_json::from_str(data)
+            .map(EndpointControlMessage::WorkspaceNavigation)
+            .unwrap_or(EndpointControlMessage::Ignored));
+    }
     if kind == crate::protocol::endpoint::HEALTH_PONG_KIND {
         return Ok(EndpointControlMessage::HealthPong);
     }
@@ -74,6 +80,19 @@ pub(crate) fn protocol_failure_is_fatal(endpoint_id: &ClientEndpointId) -> bool 
 mod tests {
     use super::*;
     use crate::client::endpoint::ProfileId;
+
+    #[test]
+    fn workspace_navigation_control_is_optional_and_ignores_malformed_payloads() {
+        let kind = crate::protocol::endpoint::WORKSPACE_NAVIGATION_KIND;
+        assert!(matches!(
+            decode_endpoint_control(kind, "{}").unwrap(),
+            EndpointControlMessage::Ignored
+        ));
+        assert!(
+            matches!(decode_endpoint_control(kind, r#"{"boot_id":"boot", "pane_id":"w1:p1"}"#).unwrap(),
+            EndpointControlMessage::WorkspaceNavigation(request) if request.pane_id == "w1:p1")
+        );
+    }
 
     #[test]
     fn unknown_optional_controls_are_ignored() {

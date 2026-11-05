@@ -8428,3 +8428,59 @@ fn no_handle_internal_event_bypass_in_module() {
         bypass_lines.join("\n  ")
     );
 }
+
+#[test]
+fn workspace_navigation_api_delivers_an_ephemeral_request_without_changing_focus() {
+    let mut server = test_headless_server();
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("navigation")];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    let pane_id = headless_pane_list(&mut server)[0].pane_id.clone();
+    let target = api::schema::PaneTarget {
+        pane_id: pane_id.clone(),
+    };
+    let no_client: api::schema::ErrorResponse =
+        serde_json::from_str(&server.handle_workspace_navigation_api("no-client".into(), &target))
+            .unwrap();
+    assert_eq!(no_client.error.code, "no_client_shell");
+    let (writer, control, _frames) = test_client_writer();
+    server.clients.insert(
+        1,
+        ClientConnection::new_with_mode(
+            ClientConnectionMode::ClientShell,
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(writer),
+        ),
+    );
+    let response: api::schema::SuccessResponse =
+        serde_json::from_str(&server.handle_workspace_navigation_api("navigate".into(), &target))
+            .unwrap();
+    assert!(matches!(
+        response.result,
+        api::schema::ResponseResult::Ok {}
+    ));
+    let ServerMessage::EndpointControl { kind, data } =
+        read_server_message(control.recv().unwrap())
+    else {
+        panic!("expected navigation request");
+    };
+    assert_eq!(kind, protocol::endpoint::WORKSPACE_NAVIGATION_KIND);
+    let request: protocol::endpoint::EndpointWorkspaceNavigation =
+        serde_json::from_str(&data).unwrap();
+    assert_eq!(request.pane_id, pane_id);
+    assert_eq!(request.boot_id, server.client_shell_boot_id);
+    assert_eq!(headless_pane_list(&mut server)[0].pane_id, pane_id);
+    let missing: api::schema::ErrorResponse =
+        serde_json::from_str(&server.handle_workspace_navigation_api(
+            "missing".into(),
+            &api::schema::PaneTarget {
+                pane_id: "invalid".into(),
+            },
+        ))
+        .unwrap();
+    assert_eq!(missing.error.code, "pane_not_found");
+    assert!(control.try_recv().is_err());
+}
