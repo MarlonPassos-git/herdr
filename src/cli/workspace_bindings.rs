@@ -125,7 +125,26 @@ impl Leaf {
     }
 }
 
-pub(crate) const LEAVES: [Leaf; 7] = [
+pub(crate) const LEAVES: [Leaf; 8] = [
+    Leaf {
+        name: "navigate",
+        about: "Request workspace navigation in clients viewing a pane",
+        id: "cli:workspace:navigate",
+        quiet: false,
+        arguments: || {
+            vec![Arg::new("pane")
+                .long("pane")
+                .value_name("ID")
+                .required(true)]
+        },
+        method: |matches| {
+            Ok(Method::WorkspaceNavigate(crate::api::schema::PaneTarget {
+                pane_id: super::normalize_pane_id(
+                    matches.get_one::<String>("pane").expect("required pane"),
+                ),
+            }))
+        },
+    },
     Leaf {
         name: "list",
         about: "List workspaces",

@@ -23,6 +23,42 @@ impl WorkspaceNavigationTarget {
 }
 
 impl ClientShellState {
+    pub(super) fn open_workspace_navigation(&mut self) {
+        self.pending_workspace_highlight = None;
+        self.mobile_switcher_scroll = 0;
+        self.reveal_mobile_workspace = false;
+        self.mode = ClientShellMode::Navigate;
+        self.navigate_workspace_id = self.focused_navigation_target();
+        self.reveal_navigation_workspace = true;
+    }
+
+    pub(crate) fn receive_workspace_navigation(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        generation: u64,
+        request: crate::protocol::endpoint::EndpointWorkspaceNavigation,
+    ) -> bool {
+        // Ignore requests from panes the user has left, inactive machines, or a
+        // previous connection. Presentation remains owned by this client.
+        if endpoint_id != &self.active_endpoint_id
+            || !self.endpoints.iter().any(|endpoint| {
+                &endpoint.endpoint_id == endpoint_id
+                    && endpoint.snapshot_generation == Some(generation)
+            })
+            || !self.snapshot.as_deref().is_some_and(|snapshot| {
+                snapshot.boot_id == request.boot_id
+                    && snapshot.focused_pane_id.as_deref() == Some(request.pane_id.as_str())
+            })
+            || self.overlay.is_some()
+            || self.popup_terminal_id.is_some()
+            || self.mode != ClientShellMode::Terminal
+        {
+            return false;
+        }
+        self.open_workspace_navigation();
+        true
+    }
+
     pub(crate) fn tick_workspace_highlight(&mut self, now: std::time::Instant) -> bool {
         if self
             .pending_workspace_highlight

@@ -59,6 +59,7 @@ operations::define_operations! {
     ClientShellSurfaceSet(ClientShellSurfaceSetParams) => "client_shell.surface.set", false, true;
     SessionSnapshot(EmptyParams) => "session.snapshot", false, false;
     WorkspaceCreate(WorkspaceCreateParams) => "workspace.create", true, true;
+    WorkspaceNavigate(PaneTarget) => "workspace.navigate", false, false;
     WorkspaceList(EmptyParams) => "workspace.list", false, false;
     WorkspaceGet(WorkspaceTarget) => "workspace.get", false, false;
     WorkspaceFocus(WorkspaceTarget) => "workspace.focus", true, true;

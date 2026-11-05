@@ -942,6 +942,13 @@ impl App {
         };
 
         let response = match request.method {
+            Method::WorkspaceNavigate(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "unsupported_in_app_mode",
+                    "workspace navigation requires a connected client shell",
+                );
+            }
             Method::ServerStop(_) => {
                 self.state.should_quit = true;
                 SuccessResponse {
