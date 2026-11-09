@@ -7,12 +7,16 @@ use ratatui::{
 };
 
 use super::scrollbar::{render_pane_scrollbar, should_show_scrollbar};
+use super::sidebar::{
+    apply_token_style, sidebar_agent_row, sidebar_token_separator, AgentTokenContext, ResolvedToken,
+};
 #[cfg(test)]
 use super::text::display_width;
 use super::text::truncate_end;
 use super::widgets::panel_contrast_fg;
 use crate::app::state::Palette;
 use crate::app::AppState;
+use crate::config::AgentSidebarToken;
 use crate::layout::{PaneId, PaneInfo};
 use crate::popup_size::resolve_popup_geometry;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
@@ -29,6 +33,197 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
     }
     let max_label_width = pane_width.saturating_sub(4) as usize;
     Some(format!(" {} ", truncate_end(label, max_label_width)))
+}
+
+enum PaneBorderTitle {
+    Plain(String),
+    Composed(Vec<ratatui::text::Span<'static>>),
+}
+
+fn pane_border_title_base_style(palette: &Palette, focused: bool) -> Style {
+    let mut style = Style::default().fg(if focused {
+        palette.accent
+    } else {
+        palette.overlay0
+    });
+    if focused {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+// Title source order: opt-in manual label, then the configured token row, then the
+// baseline effective title -> manual label -> gated identity chain.
+fn pane_border_title_for(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    info: &PaneInfo,
+) -> Option<PaneBorderTitle> {
+    let terminal = ws
+        .pane_state(info.id)
+        .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))?;
+    if app.pane_manual_label_first {
+        if let Some(label) = terminal
+            .manual_label
+            .as_deref()
+            .filter(|label| !label.trim().is_empty())
+        {
+            return pane_border_title(label, info.rect.width, info.is_focused)
+                .map(PaneBorderTitle::Plain);
+        }
+    }
+    if let Some(row) = app.pane_title_tokens.as_deref() {
+        if let Some(spans) = composed_pane_border_title(app, ws, info, terminal, row) {
+            return Some(PaneBorderTitle::Composed(spans));
+        }
+    }
+    terminal
+        .border_label(app.show_agent_labels_on_pane_borders)
+        .and_then(|label| pane_border_title(&label, info.rect.width, info.is_focused))
+        .map(PaneBorderTitle::Plain)
+}
+
+fn row_uses(row: &[AgentSidebarToken], token: AgentSidebarToken) -> bool {
+    row.iter().any(|configured| *configured.parts().0 == token)
+}
+
+// Resolves the configured row with the sidebar resolver against server-side pane data.
+// Status and machine tokens are client presentation, so they resolve as missing here.
+fn composed_pane_border_title(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    info: &PaneInfo,
+    terminal: &crate::terminal::TerminalState,
+    row: &[AgentSidebarToken],
+) -> Option<Vec<ratatui::text::Span<'static>>> {
+    if info.rect.width <= 4 {
+        return None;
+    }
+    let workspace = if row_uses(row, AgentSidebarToken::Workspace) {
+        ws.display_name_from_terminals(&app.terminals)
+    } else {
+        String::new()
+    };
+    let tab = row_uses(row, AgentSidebarToken::Tab)
+        .then(|| ws.find_tab_index_for_pane(info.id))
+        .flatten()
+        .filter(|tab_idx| ws.tabs.len() > 1 || !ws.tabs[*tab_idx].is_auto_named())
+        .and_then(|tab_idx| ws.tab_display_name(tab_idx));
+    let title = terminal.effective_title();
+    let pane = row_uses(row, AgentSidebarToken::Pane)
+        .then(|| title.clone().or_else(|| terminal.manual_label.clone()))
+        .flatten();
+    let agent = row_uses(row, AgentSidebarToken::Agent)
+        .then(|| {
+            terminal
+                .effective_display_agent()
+                .or_else(|| terminal.agent_name.clone())
+                .or_else(|| terminal.effective_agent_label().map(str::to_string))
+                .or_else(|| title.clone())
+        })
+        .flatten();
+    let terminal_title_stripped = row_uses(row, AgentSidebarToken::TerminalTitleStripped)
+        .then(|| terminal.terminal_title_stripped())
+        .flatten();
+    let context = AgentTokenContext {
+        machine: None,
+        workspace: &workspace,
+        tab: tab.as_deref(),
+        pane: pane.as_deref(),
+        agent_label: agent.as_deref(),
+        terminal_title: terminal.terminal_title.as_deref(),
+        terminal_title_stripped: terminal_title_stripped.as_deref(),
+        canonical_agent: None,
+        tokens: &terminal.metadata_tokens,
+    };
+    let resolved = sidebar_agent_row(row, &context, "")
+        .into_iter()
+        .filter(|token| {
+            token
+                .kind
+                .text_value()
+                .is_some_and(|text| !text.trim().is_empty())
+        })
+        .collect::<Vec<_>>();
+    compose_title_spans(
+        &resolved,
+        pane_border_title_base_style(&app.palette, info.is_focused),
+        info.is_focused,
+        info.rect.width.saturating_sub(4) as usize,
+    )
+}
+
+fn compose_title_spans(
+    resolved: &[ResolvedToken],
+    base: Style,
+    focused: bool,
+    max_width: usize,
+) -> Option<Vec<ratatui::text::Span<'static>>> {
+    use ratatui::text::Span;
+    let mut content = Vec::new();
+    for (index, token) in resolved.iter().enumerate() {
+        let Some(text) = token.kind.text_value().map(str::trim) else {
+            continue;
+        };
+        if index > 0 {
+            content.push(Span::styled(
+                sidebar_token_separator(&resolved[index - 1], token),
+                base,
+            ));
+        }
+        // Focus adds BOLD on top of token styles; token fg replaces the fallback fg.
+        let mut style = apply_token_style(base.remove_modifier(Modifier::BOLD), token.style);
+        if focused {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        content.push(Span::styled(text.to_string(), style));
+    }
+    if content.is_empty() || max_width == 0 {
+        return None;
+    }
+    let mut spans = vec![Span::styled(" ", base)];
+    spans.extend(clip_title_spans(content, max_width));
+    spans.push(Span::styled(" ", base));
+    Some(spans)
+}
+
+fn grapheme_width(grapheme: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(grapheme)
+}
+
+// End-clips styled spans by display width with the existing "…" marker, cutting only at
+// grapheme-cluster boundaries.
+fn clip_title_spans(
+    spans: Vec<ratatui::text::Span<'static>>,
+    max_width: usize,
+) -> Vec<ratatui::text::Span<'static>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let total = spans
+        .iter()
+        .flat_map(|span| span.content.graphemes(true))
+        .map(grapheme_width)
+        .sum::<usize>();
+    if total <= max_width {
+        return spans;
+    }
+    let budget = max_width.saturating_sub(1);
+    let mut used = 0usize;
+    let mut clipped = Vec::new();
+    for span in spans {
+        let mut kept = String::new();
+        for grapheme in span.content.graphemes(true) {
+            let width = grapheme_width(grapheme);
+            if used + width > budget {
+                kept.push('…');
+                clipped.push(ratatui::text::Span::styled(kept, span.style));
+                return clipped;
+            }
+            kept.push_str(grapheme);
+            used += width;
+        }
+        clipped.push(ratatui::text::Span::styled(kept, span.style));
+    }
+    clipped
 }
 
 // Full view computation reaches this helper for active and background panes.
@@ -741,12 +936,7 @@ fn render_pane_border_titles(
         if !info.borders.contains(Borders::TOP) || info.rect.width <= 4 {
             continue;
         }
-        let Some(title) = ws
-            .pane_state(info.id)
-            .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.border_label(app.show_agent_labels_on_pane_borders))
-            .and_then(|label| pane_border_title(&label, info.rect.width, info.is_focused))
-        else {
+        let Some(title) = pane_border_title_for(app, ws, info) else {
             continue;
         };
         let y = info.rect.y;
@@ -763,22 +953,33 @@ fn render_pane_border_titles(
         if start_x >= end_x {
             continue;
         }
-        let color = if info.is_focused {
-            app.palette.accent
-        } else {
-            app.palette.overlay0
-        };
-        let mut style = Style::default().fg(color);
-        if info.is_focused {
-            style = style.add_modifier(Modifier::BOLD);
+        let style = pane_border_title_base_style(&app.palette, info.is_focused);
+        match title {
+            PaneBorderTitle::Plain(title) => {
+                buf.set_stringn(
+                    start_x,
+                    y,
+                    title,
+                    end_x.saturating_sub(start_x) as usize,
+                    style,
+                );
+            }
+            PaneBorderTitle::Composed(spans) => {
+                let mut x = start_x;
+                for span in spans {
+                    if x >= end_x {
+                        break;
+                    }
+                    (x, _) = buf.set_stringn(
+                        x,
+                        y,
+                        &span.content,
+                        end_x.saturating_sub(x) as usize,
+                        span.style,
+                    );
+                }
+            }
         }
-        buf.set_stringn(
-            start_x,
-            y,
-            title,
-            end_x.saturating_sub(start_x) as usize,
-            style,
-        );
     }
 }
 

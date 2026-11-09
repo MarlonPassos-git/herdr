@@ -543,6 +543,8 @@ impl App {
             pane_scrollbars: config.ui.pane_scrollbars,
             pane_gaps: config.ui.pane_gaps,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
+            pane_title_tokens: config.ui.pane_title_tokens.clone(),
+            pane_manual_label_first: config.ui.pane_manual_label_first,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: String::new(),
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
@@ -916,6 +918,8 @@ impl App {
                 self.state.pane_gaps = config.ui.pane_gaps;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
+                self.state.pane_title_tokens = config.ui.pane_title_tokens.clone();
+                self.state.pane_manual_label_first = config.ui.pane_manual_label_first;
                 self.configure_tab_bar_status(
                     &config.ui.tab_bar_right,
                     &config.ui.tab_bar_right_separator,
