@@ -318,6 +318,41 @@ fn print_snapshot_encoding_profiles(label: &str, build: fn(usize) -> Vec<Workspa
     }
 }
 
+fn print_pane_title_profiles() {
+    for (label, build) in [
+        ("background", workspaces as fn(usize) -> Vec<Workspace>),
+        ("active", active_panes),
+    ] {
+        for enabled in [false, true] {
+            let mut config = Config::default();
+            config.ui.pane_borders = crate::config::PaneBordersConfig::Always;
+            if enabled {
+                config.ui.pane_title_tokens = Some(vec![
+                    crate::config::AgentSidebarToken::Workspace,
+                    crate::config::AgentSidebarToken::Custom("task".into()),
+                ]);
+            }
+            let rows = [1, 15].map(|count| {
+                let mut pipeline = RenderPipeline::with_config(build(count), &config);
+                pipeline.app.state.ensure_test_terminals();
+                for terminal in pipeline.app.state.terminals.values_mut() {
+                    terminal.metadata_tokens.patch(
+                        std::collections::HashMap::from([(
+                            "task".into(),
+                            Some("session-name".into()),
+                        )]),
+                        None,
+                        Instant::now(),
+                    );
+                }
+                (count, profile_pipeline(pipeline))
+            });
+            println!("pane title tokens {label}: enabled={enabled}");
+            print_stage("server pane surface", &rows, |stats| stats.server);
+        }
+    }
+}
+
 fn print_token_rule_profiles() {
     let rules = std::iter::repeat_n(
         "{ contains = 'NO-MATCH', ignore_case = true, bold = true }",
@@ -611,6 +646,7 @@ async fn render_scale_profile() {
     print_profiles("active panes (one workspace)", active_panes);
     print_snapshot_encoding_profiles("active panes", active_panes);
     print_token_rule_profiles();
+    print_pane_title_profiles();
     print_surface_reuse_profiles();
     print_surface_damage_profiles();
 }
