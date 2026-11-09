@@ -1850,6 +1850,34 @@ mod tests {
     }
 
     #[test]
+    fn reload_config_applies_and_removes_pane_title_tokens() {
+        let mut app = test_app();
+        assert_eq!(app.state.pane_title_tokens, None);
+        assert!(!app.state.pane_manual_label_first);
+
+        let config: Config =
+            toml::from_str("[ui]\npane_title_tokens = [\"$task\"]\npane_manual_label_first = true")
+                .unwrap();
+        let report = app.apply_live_config(&config, &[], &[], false);
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(
+            app.state.pane_title_tokens,
+            Some(vec![crate::config::AgentSidebarToken::Custom(
+                "task".into()
+            )])
+        );
+        assert!(app.state.pane_manual_label_first);
+
+        // An invalid [ui] section keeps the previous settings.
+        app.apply_live_config(&Config::default(), &[], &["ui".into()], false);
+        assert!(app.state.pane_title_tokens.is_some());
+
+        app.apply_live_config(&Config::default(), &[], &[], false);
+        assert_eq!(app.state.pane_title_tokens, None);
+        assert!(!app.state.pane_manual_label_first);
+    }
+
+    #[test]
     fn reload_config_reports_startup_delay_requires_restart() {
         let mut app = test_app();
         let mut config = Config::default();

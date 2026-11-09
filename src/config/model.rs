@@ -1575,6 +1575,63 @@ tab_bar_right_separator = " · "
     }
 
     #[test]
+    fn pane_title_tokens_parse_sidebar_row_shape() {
+        use crate::config::AgentSidebarToken;
+        let default_config = Config::default();
+        assert_eq!(default_config.ui.pane_title_tokens, None);
+        assert!(!default_config.ui.pane_manual_label_first);
+
+        let config: Config = toml::from_str(
+            r##"
+[ui]
+pane_manual_label_first = true
+pane_title_tokens = ["tab", { token = "$task", fg = "#f38ba8", bold = true, dim = false }]
+"##,
+        )
+        .unwrap();
+        assert!(config.ui.pane_manual_label_first);
+        let row = config.ui.pane_title_tokens.unwrap();
+        assert_eq!(row[0], AgentSidebarToken::Tab);
+        let AgentSidebarToken::Styled {
+            token,
+            style,
+            rules,
+        } = &row[1]
+        else {
+            panic!("expected styled token");
+        };
+        assert_eq!(**token, AgentSidebarToken::Custom("task".into()));
+        assert_eq!(
+            style.fg.map(|fg| fg.ratatui()),
+            Some(ratatui::style::Color::Rgb(0xf3, 0x8b, 0xa8))
+        );
+        assert_eq!((style.bold, style.dim), (Some(true), Some(false)));
+        assert!(rules.is_empty());
+
+        let empty: Config = toml::from_str("[ui]\npane_title_tokens = []").unwrap();
+        assert_eq!(empty.ui.pane_title_tokens, Some(Vec::new()));
+    }
+
+    #[test]
+    fn pane_title_tokens_reject_invalid_tokens() {
+        for toml in [
+            "[ui]\npane_title_tokens = [\"unknown\"]",
+            "[ui]\npane_title_tokens = [\"$bad name\"]",
+            "[ui]\npane_title_tokens = [{ token = \"$task\", fg = \"red\" }]",
+            "[ui]\npane_title_tokens = \"$task\"",
+            "[ui]\npane_manual_label_first = \"yes\"",
+        ] {
+            assert!(toml::from_str::<Config>(toml).is_err(), "{toml}");
+        }
+        let too_many = format!(
+            "[ui]\npane_title_tokens = [{}]",
+            vec!["\"tab\""; 17].join(", ")
+        );
+        let error = toml::from_str::<Config>(&too_many).unwrap_err().to_string();
+        assert!(error.contains("at most 16 tokens"), "{error}");
+    }
+
+    #[test]
     fn worktrees_directory_defaults_and_parses() {
         let default_config = Config::default();
         assert_eq!(default_config.worktrees.directory, "~/.herdr/worktrees");
